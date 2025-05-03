@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 日志文件
+*.log
+
+# 环境变量文件（包含敏感信息，不应该提交）
+.env
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 代码编辑器/IDE配置
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 其他
+api_test.html 

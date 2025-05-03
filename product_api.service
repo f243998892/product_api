@@ -1,0 +1,16 @@
+[Unit]
+Description=Product API Service
+After=network.target
+
+[Service]
+User=administrator
+Group=administrator
+WorkingDirectory=/home/user/product_api
+ExecStart=/bin/bash /home/user/product_api/run.sh
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target 
