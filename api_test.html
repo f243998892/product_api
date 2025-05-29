@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>API测试</title>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        button { padding: 10px; margin: 5px; }
+        #output { border: 1px solid #ccc; padding: 10px; min-height: 200px; margin-top: 20px; white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+    <h1>API连接测试</h1>
+    
+    <div>
+        <h3>API基础测试</h3>
+        <button onclick="testApi('https://www.fanghui8131.fun/api/test')">测试域名API</button>
+        <button onclick="testApi('http://localhost:8000/api/test')">测试本地API</button>
+        <input type="text" id="customUrl" placeholder="输入自定义测试URL..." style="width: 300px;">
+        <button onclick="testCustomUrl()">测试自定义URL</button>
+    </div>
+    
+    <div>
+        <h3>产品查询测试</h3>
+        <input type="text" id="employeeName" placeholder="员工姓名" value="张三">
+        <button onclick="testProductQuery()">测试产品查询</button>
+    </div>
+    
+    <div id="output">
+        结果将显示在这里...
+    </div>
+    
+    <script>
+        async function testApi(url) {
+            const output = document.getElementById('output');
+            output.textContent = `正在请求 ${url}...`;
+            
+            try {
+                const startTime = new Date().getTime();
+                const response = await fetch(url);
+                const endTime = new Date().getTime();
+                const responseTime = endTime - startTime;
+                
+                const data = await response.json();
+                output.textContent = `请求成功 (${responseTime}ms):\n\n${JSON.stringify(data, null, 2)}`;
+            } catch (error) {
+                output.textContent = `请求失败:\n\n${error.message}`;
+            }
+        }
+        
+        function testCustomUrl() {
+            const url = document.getElementById('customUrl').value;
+            if (url) {
+                testApi(url);
+            } else {
+                document.getElementById('output').textContent = "请输入URL";
+            }
+        }
+        
+        async function testProductQuery() {
+            const output = document.getElementById('output');
+            const employeeName = document.getElementById('employeeName').value;
+            const now = new Date();
+            const startDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+            const endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).toISOString();
+            
+            output.textContent = `正在查询员工 ${employeeName} 的产品数据...`;
+            
+            try {
+                // 测试域名API
+                try {
+                    const url = `https://www.fanghui8131.fun/api/getUserMonthlyProducts?employeeName=${encodeURIComponent(employeeName)}&startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`;
+                    output.textContent += `\n\n尝试域名请求: ${url}`;
+                    const response = await fetch(url);
+                    const data = await response.json();
+                    output.textContent += `\n域名请求成功: ${JSON.stringify(data, null, 2)}`;
+                } catch(e) {
+                    output.textContent += `\n域名请求失败: ${e.message}`;
+                }
+                
+                // 测试本地API
+                try {
+                    const localUrl = `http://localhost:8000/api/getUserMonthlyProducts?employeeName=${encodeURIComponent(employeeName)}&startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`;
+                    output.textContent += `\n\n尝试本地请求: ${localUrl}`;
+                    const localResponse = await fetch(localUrl);
+                    const localData = await localResponse.json();
+                    output.textContent += `\n本地请求成功: ${JSON.stringify(localData, null, 2)}`;
+                } catch(e) {
+                    output.textContent += `\n本地请求失败: ${e.message}`;
+                }
+            } catch (error) {
+                output.textContent += `\n\n总体错误: ${error.message}`;
+            }
+        }
+    </script>
+</body>
+</html> 
