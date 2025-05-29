@@ -180,10 +180,19 @@ async def get_product_details(productCode: str):
 async def get_user_monthly_products(employeeName: str, startDate: str, endDate: str):
     conn = None
     try:
-        # 先获取所有产品
-        conn = get_db_connection()
+        print(f"[DEBUG] 收到查询请求: employeeName={employeeName}, startDate={startDate}, endDate={endDate}")
+        print(f"[DEBUG] 请求URL参数解码后: employeeName={employeeName}")
+        
+        try:
+            conn = get_db_connection()
+            print(f"[DEBUG] 数据库连接成功")
+        except Exception as db_error:
+            print(f"[ERROR] 数据库连接失败: {str(db_error)}")
+            raise HTTPException(status_code=500, detail=f"数据库连接失败: {str(db_error)}")
+        
         cursor = conn.cursor()
         
+        # 构建查询条件：使用LIKE而不是精确匹配，以处理可能的空格或其他差异
         query = """
         SELECT * FROM products 
         WHERE ("绕线员工" LIKE %s OR "嵌线员工" LIKE %s OR "接线员工" LIKE %s OR 
@@ -193,10 +202,17 @@ async def get_user_monthly_products(employeeName: str, startDate: str, endDate: 
         
         # 在参数两侧添加%以进行模糊匹配
         search_name = f"%{employeeName.strip()}%"
-        cursor.execute(query, [search_name] * 6)
-        products = cursor.fetchall()
+        print(f"[DEBUG] SQL查询参数: search_name={search_name}")
+        try:
+            cursor.execute(query, [search_name] * 6)
+            products = cursor.fetchall()
+            print(f"[DEBUG] 查询到 {len(products)} 条产品记录")
+        except Exception as query_error:
+            print(f"[ERROR] SQL查询失败: {str(query_error)}")
+            conn.close()
+            raise HTTPException(status_code=500, detail=f"SQL查询失败: {str(query_error)}")
         
-        # 查询完毕后关闭连接
+        # 连接使用完毕后关闭
         conn.close()
         conn = None
         
@@ -232,23 +248,28 @@ async def get_user_monthly_products(employeeName: str, startDate: str, endDate: 
                     filtered_products.append(dict(product))
             except Exception as e:
                 print(f"[ERROR] 处理产品时出错: {str(e)}")
+                # 继续处理下一个产品
+                continue
         
-        print(f"[DEBUG] 过滤后产品数量: {len(filtered_products)}")
+        print(f"[DEBUG] 筛选后 {len(filtered_products)} 条产品记录在时间范围内")
         
-        # 返回响应，添加特殊标记以便前端处理
-        response = {
-            "data": filtered_products,
-            "client_info": {
-                "is_ios": False
-            }
-        }
+        if len(filtered_products) == 0:
+            print("[WARNING] 没有找到符合条件的产品记录")
+            # 打印前5条产品记录的关键信息用于调试
+            for i, p in enumerate(products[:5]):
+                print(f"[DEBUG] 产品样本 {i+1}: 编码={p.get('产品编码')}, 型号={p.get('产品型号')}")
+                print(f"  绕线: 员工={p.get('绕线员工')}, 时间={p.get('绕线时间')}")
+                print(f"  嵌线: 员工={p.get('嵌线员工')}, 时间={p.get('嵌线时间')}")
+                print(f"  接线: 员工={p.get('接线员工')}, 时间={p.get('接线时间')}")
+                print(f"  压装: 员工={p.get('压装员工')}, 时间={p.get('压装时间')}")
+                print(f"  车止口: 员工={p.get('车止口员工')}, 时间={p.get('车止口时间')}")
         
-        return response
+        return {"data": filtered_products}
     except Exception as e:
-        print(f"[ERROR] 总体异常: {str(e)}")
+        print(f"[ERROR] 查询产品失败: {str(e)}")
         if conn:
             conn.close()
-        raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/getUserMonthlyTransactions")
 async def get_user_monthly_transactions(employeeName: str, startDate: str, endDate: str):
@@ -627,37 +648,3 @@ async def get_month_range():
                 "endDate": last_day.isoformat()
             }
         }
-
-@app.get("/api/modelSeries")
-async def get_model_series():
-    """
-    获取所有产品型号与工艺分类信息
-    """
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM model_series')
-        rows = cursor.fetchall()
-        conn.close()
-        return {"data": rows}
-    except Exception as e:
-        if 'conn' in locals() and conn:
-            conn.close()
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/seriesProcesses")
-async def get_series_processes():
-    """
-    获取所有工艺分类与工序流程信息
-    """
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM series_processes')
-        rows = cursor.fetchall()
-        conn.close()
-        return {"data": rows}
-    except Exception as e:
-        if 'conn' in locals() and conn:
-            conn.close()
-        raise HTTPException(status_code=500, detail=str(e))
