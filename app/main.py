@@ -5,7 +5,7 @@ from typing import List, Optional
 import json
 from datetime import datetime, timezone
 
-from app.database import get_db_connection
+from database import get_db_connection
 from datetime import datetime, timedelta
 
 app = FastAPI()
