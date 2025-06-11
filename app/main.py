@@ -62,60 +62,91 @@ async def update_product_process(data: UpdateProductProcess):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+        # 查询产品型号
+        cursor.execute('SELECT "产品型号" FROM products WHERE "产品编码" = %s', (data.productCode,))
+        product_row = cursor.fetchone()
+        product_model = product_row["产品型号"] if product_row and isinstance(product_row, dict) else (product_row[0] if product_row else None)
+        # 检查是否在exception表
+        if data.processType == 'wiring':
+            skip_check = False
+            if product_model:
+                cursor.execute('SELECT 1 FROM exception WHERE "产品型号" = %s LIMIT 1', (product_model,))
+                exception_row = cursor.fetchone()
+                if exception_row:
+                    skip_check = True
+            if not skip_check:
+                cursor.execute(
+                    'SELECT "绕线时间" FROM products WHERE "绕线员工" = %s AND "绕线时间" IS NOT NULL ORDER BY "绕线时间" DESC LIMIT 1',
+                    (data.employeeName,)
+                )
+                row = cursor.fetchone()
+                if row:
+                    latest_time = row["绕线时间"] if isinstance(row, dict) else row[0]
+                    try:
+                        from datetime import timezone
+                        now = datetime.now(timezone.utc)
+                        t2 = datetime.fromisoformat(str(latest_time).replace('Z', '+00:00'))
+                        if abs((now - t2).total_seconds()) < 300:
+                            conn.close()
+                            raise HTTPException(status_code=400, detail="两次录入绕线工序时间间隔小于5分钟，禁止录入")
+                    except Exception as e:
+                        pass
+        else:
+            # 查不到产品型号，默认校验
+            cursor.execute(
+                'SELECT "绕线时间" FROM products WHERE "绕线员工" = %s AND "绕线时间" IS NOT NULL ORDER BY "绕线时间" DESC LIMIT 1',
+                (data.employeeName,)
+            )
+            row = cursor.fetchone()
+            if row:
+                latest_time = row["绕线时间"] if isinstance(row, dict) else row[0]
+                try:
+                    from datetime import timezone
+                    now = datetime.now(timezone.utc)
+                    t2 = datetime.fromisoformat(str(latest_time).replace('Z', '+00:00'))
+                    if abs((now - t2).total_seconds()) < 300:
+                        conn.close()
+                        raise HTTPException(status_code=400, detail="两次录入绕线工序时间间隔小于5分钟，禁止录入")
+                except Exception as e:
+                    # 日期格式异常不拦截
+                    pass
         # 检查产品是否存在
         cursor.execute(
             "SELECT * FROM products WHERE \"产品编码\" = %s",
             (data.productCode,)
         )
         product = cursor.fetchone()
-        
         if not product:
             # 修改：如果产品不存在，则直接插入新记录，而不是返回错误
             print(f"产品不存在，创建新记录: {data.productCode}")
-            
-            # 准备插入新产品的基本信息
             insert_data = {
                 "产品编码": data.productCode,
                 data.timeField: data.timestamp
             }
-            
-            # 如果有员工字段，添加员工信息
             if data.employeeField:
                 insert_data[data.employeeField] = data.employeeName
-            
-            # 构建SQL插入语句
             columns = ', '.join([f'"{k}"' for k in insert_data.keys()])
             placeholders = ', '.join(['%s'] * len(insert_data))
             values = list(insert_data.values())
-            
             query = f'INSERT INTO products ({columns}) VALUES ({placeholders})'
             cursor.execute(query, values)
-            
             conn.commit()
             conn.close()
-            
             return {"success": True}
-        
         # 检查工序字段是否已有数据
         if product[data.timeField]:
             conn.close()
             raise HTTPException(status_code=400, detail="该产品的该工序已存在数据，不能覆盖")
-        
         # 更新数据
         update_data = {data.timeField: data.timestamp}
         if data.employeeField:
             update_data[data.employeeField] = data.employeeName
-        
-        update_fields = ", ".join([f"\"{k}\" = %s" for k in update_data.keys()])
+        update_fields = ", ".join([f'"{k}" = %s' for k in update_data.keys()])
         update_values = list(update_data.values())
-        
         query = f"UPDATE products SET {update_fields} WHERE \"产品编码\" = %s"
         cursor.execute(query, update_values + [data.productCode])
-        
         conn.commit()
         conn.close()
-        
         return {"success": True}
     except Exception as e:
         if conn:
@@ -165,15 +196,11 @@ async def get_product_details(productCode: str):
         )
         product = cursor.fetchone()
         
-        conn.close()
-        
         if not product:
             raise HTTPException(status_code=404, detail="产品不存在")
         
         return {"data": dict(product)}
     except Exception as e:
-        if conn:
-            conn.close()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/getUserMonthlyProducts")
@@ -246,8 +273,6 @@ async def get_user_monthly_products(employeeName: str, startDate: str, endDate: 
         return response
     except Exception as e:
         print(f"[ERROR] 总体异常: {str(e)}")
-        if conn:
-            conn.close()
         raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
 
 @app.get("/api/getUserMonthlyTransactions")
@@ -358,8 +383,6 @@ async def get_user_monthly_transactions(employeeName: str, startDate: str, endDa
         return {"data": transactions}
     except Exception as e:
         print(f"查询月度交易失败: {str(e)}")
-        if conn:
-            conn.close()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/deleteProductProcess")
@@ -376,12 +399,10 @@ async def delete_product_process(data: DeleteProductProcess):
         product = cursor.fetchone()
         
         if not product:
-            conn.close()
             raise HTTPException(status_code=404, detail="产品不存在")
         
         # 检查是否是当前用户的工序 - 浸漆工序特殊处理
         if data.employeeField and data.processType != '浸漆' and product[data.employeeField] != data.employeeName:
-            conn.close()
             raise HTTPException(status_code=403, detail="不是当前用户的工序")
         
         # 清除工序信息
@@ -395,13 +416,8 @@ async def delete_product_process(data: DeleteProductProcess):
         query = f"UPDATE products SET {update_fields} WHERE \"产品编码\" = %s"
         cursor.execute(query, update_values + [data.productCode])
         
-        conn.commit()
-        conn.close()
-        
         return {"success": True}
     except Exception as e:
-        if conn:
-            conn.close()
         raise HTTPException(status_code=500, detail=str(e))
 
 # 辅助函数
@@ -589,20 +605,6 @@ async def get_month_range():
         except Exception as db_error:
             print(f"查询month_range表出错: {str(db_error)}")
             
-        conn.close()
-        
-        # 如果无法从数据库获取，使用默认的当前月份范围
-        now = datetime.now()
-        first_day = datetime(now.year, now.month, 1)
-        # 正确处理月份溢出
-        if now.month == 12:
-            last_day = datetime(now.year + 1, 1, 1) - timedelta(days=1)
-        else:
-            last_day = datetime(now.year, now.month + 1, 1) - timedelta(days=1)
-        last_day = datetime(last_day.year, last_day.month, last_day.day, 23, 59, 59)
-        
-        print(f"使用默认月份范围: {first_day.isoformat()} 至 {last_day.isoformat()}")
-        
         return {
             "data": {
                 "startDate": first_day.isoformat(),
@@ -638,11 +640,8 @@ async def get_model_series():
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM model_series')
         rows = cursor.fetchall()
-        conn.close()
         return {"data": rows}
     except Exception as e:
-        if 'conn' in locals() and conn:
-            conn.close()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/seriesProcesses")
@@ -655,9 +654,6 @@ async def get_series_processes():
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM series_processes')
         rows = cursor.fetchall()
-        conn.close()
         return {"data": rows}
     except Exception as e:
-        if 'conn' in locals() and conn:
-            conn.close()
         raise HTTPException(status_code=500, detail=str(e))
