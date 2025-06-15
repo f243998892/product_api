@@ -3,10 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from database import get_db_connection
-from datetime import datetime, timedelta
 
 app = FastAPI()
 
@@ -664,10 +663,11 @@ async def get_user_today_process_count(employeeName: str = Query(...)):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        # 获取今天日期范围
-        now = datetime.now()
-        start_date = datetime(now.year, now.month, now.day, 0, 0, 0)
-        end_date = datetime(now.year, now.month, now.day, 23, 59, 59)
+        # 获取东八区时区
+        tz = timezone(timedelta(hours=8))
+        now = datetime.now(tz)
+        start_date = datetime(now.year, now.month, now.day, 0, 0, 0, tzinfo=tz)
+        end_date = datetime(now.year, now.month, now.day, 23, 59, 59, tzinfo=tz)
         # 查询所有与该员工有关的产品
         query = '''
         SELECT * FROM products 
@@ -696,11 +696,21 @@ async def get_user_today_process_count(employeeName: str = Query(...)):
                     t = product.get(time_field)
                     if t:
                         try:
+                            # 统一转为东八区时间
                             if isinstance(t, str):
-                                t = datetime.fromisoformat(t.replace('Z', '+00:00'))
-                            elif not isinstance(t, datetime):
+                                dt = datetime.fromisoformat(t.replace('Z', '+00:00'))
+                                if dt.tzinfo is None:
+                                    dt = dt.replace(tzinfo=tz)
+                                else:
+                                    dt = dt.astimezone(tz)
+                            elif isinstance(t, datetime):
+                                if t.tzinfo is None:
+                                    dt = t.replace(tzinfo=tz)
+                                else:
+                                    dt = t.astimezone(tz)
+                            else:
                                 continue
-                            if t >= start_date and t <= end_date:
+                            if start_date <= dt <= end_date:
                                 count += 1
                         except Exception:
                             continue
