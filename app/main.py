@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
@@ -387,38 +387,38 @@ async def get_user_monthly_transactions(employeeName: str, startDate: str, endDa
 
 @app.post("/api/deleteProductProcess")
 async def delete_product_process(data: DeleteProductProcess):
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
         # 检查产品是否存在
         cursor.execute(
             "SELECT * FROM products WHERE \"产品编码\" = %s",
             (data.productCode,)
         )
         product = cursor.fetchone()
-        
         if not product:
             raise HTTPException(status_code=404, detail="产品不存在")
-        
         # 检查是否是当前用户的工序 - 浸漆工序特殊处理
         if data.employeeField and data.processType != '浸漆' and product[data.employeeField] != data.employeeName:
             raise HTTPException(status_code=403, detail="不是当前用户的工序")
-        
         # 清除工序信息
         update_data = {data.timeField: None}
         if data.employeeField:
             update_data[data.employeeField] = None
-        
         update_fields = ", ".join([f"\"{k}\" = %s" for k in update_data.keys()])
         update_values = list(update_data.values())
-        
         query = f"UPDATE products SET {update_fields} WHERE \"产品编码\" = %s"
         cursor.execute(query, update_values + [data.productCode])
-        
+        conn.commit()
         return {"success": True}
     except Exception as e:
+        if conn:
+            conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
 
 # 辅助函数
 def get_time_field(process_type):
@@ -656,4 +656,58 @@ async def get_series_processes():
         rows = cursor.fetchall()
         return {"data": rows}
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/getUserTodayProcessCount")
+async def get_user_today_process_count(employeeName: str = Query(...)):
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        # 获取今天日期范围
+        now = datetime.now()
+        start_date = datetime(now.year, now.month, now.day, 0, 0, 0)
+        end_date = datetime(now.year, now.month, now.day, 23, 59, 59)
+        # 查询所有与该员工有关的产品
+        query = '''
+        SELECT * FROM products 
+        WHERE ("绕线员工" LIKE %s OR "嵌线员工" LIKE %s OR "接线员工" LIKE %s OR 
+                   "压装员工" LIKE %s OR "车止口员工" LIKE %s OR "浸漆员工" LIKE %s)
+        '''
+        search_name = f"%{employeeName.strip()}%"
+        cursor.execute(query, [search_name] * 6)
+        products = cursor.fetchall()
+        conn.close()
+        conn = None
+        # 统计每个工序今日数量
+        process_map = {
+            "绕线": ("绕线员工", "绕线时间"),
+            "嵌线": ("嵌线员工", "嵌线时间"),
+            "接线": ("接线员工", "接线时间"),
+            "压装": ("压装员工", "压装时间"),
+            "车止口": ("车止口员工", "车止口时间"),
+            "浸漆": ("浸漆员工", "浸漆时间")
+        }
+        result = []
+        for process, (emp_field, time_field) in process_map.items():
+            count = 0
+            for product in products:
+                if is_employee_match(product.get(emp_field), employeeName):
+                    t = product.get(time_field)
+                    if t:
+                        try:
+                            if isinstance(t, str):
+                                t = datetime.fromisoformat(t.replace('Z', '+00:00'))
+                            elif not isinstance(t, datetime):
+                                continue
+                            if t >= start_date and t <= end_date:
+                                count += 1
+                        except Exception:
+                            continue
+            if count > 0:
+                result.append({"process": process, "count": count})
+        return {"data": result}
+    except Exception as e:
+        if conn:
+            conn.close()
         raise HTTPException(status_code=500, detail=str(e))
