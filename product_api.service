@@ -5,8 +5,8 @@ After=network.target
 [Service]
 User=administrator
 Group=administrator
-WorkingDirectory=/home/user/product_api
-ExecStart=/bin/bash /home/user/product_api/run.sh
+WorkingDirectory=/home/user/product_api_dev
+ExecStart=/bin/bash /home/user/product_api_dev/run.sh
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
