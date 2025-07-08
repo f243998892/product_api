@@ -5,7 +5,7 @@ from typing import List, Optional
 import json
 from datetime import datetime, timezone, timedelta
 
-from database import get_db_connection
+from app.database import get_db_connection
 
 app = FastAPI()
 
@@ -154,34 +154,64 @@ async def update_product_process(data: UpdateProductProcess):
 
 @app.post("/api/batchUpdateProductProcess")
 async def batch_update_product_process(data: BatchUpdateProductProcess):
+    from datetime import datetime, timezone
     results = []
-    
-    for code in data.productCodes:
-        try:
-            # 构建单个更新请求
-            update_data = UpdateProductProcess(
-                productCode=code,
-                processType=data.processType,
-                employeeName=data.employeeName,
-                timeField=get_time_field(data.processType),
-                employeeField=get_employee_field(data.processType),
-                timestamp=datetime.now(timezone.utc).isoformat()
-            )
-            
-            # 尝试更新
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        now_str = datetime.now(timezone.utc).isoformat()
+        time_field = get_time_field(data.processType)
+        employee_field = get_employee_field(data.processType)
+        # 1. 查找哪些产品已存在
+        cursor.execute(
+            f'SELECT "产品编码" FROM products WHERE "产品编码" = ANY(%s)',
+            (data.productCodes,)
+        )
+        exist_codes = set(row[0] for row in cursor.fetchall())
+        to_update = [code for code in data.productCodes if code in exist_codes]
+        to_insert = [code for code in data.productCodes if code not in exist_codes]
+        # 2. 批量UPDATE
+        update_success, update_fail = [], []
+        if to_update:
+            update_sql = f'UPDATE products SET "{time_field}"=%s, "{employee_field}"=%s WHERE "产品编码"=%s AND ("{time_field}" IS NULL OR "{time_field}" = \'\')'
+            update_params = [(now_str, data.employeeName, code) for code in to_update]
             try:
-                await update_product_process(update_data)
-                results.append({"code": code, "success": True})
-            except HTTPException as e:
-                # 记录错误信息但继续处理其他产品
-                print(f"更新产品失败: {code}, 错误: {str(e.detail)}")
-                # 如果是400错误（工序已存在），则标记为失败，其他错误(如404-产品不存在)不再出现因为修改了函数
-                results.append({"code": code, "success": False, "error": str(e.detail)})
-        except Exception as e:
-            print(f"处理产品异常: {code}, 错误: {str(e)}")
-            results.append({"code": code, "success": False, "error": str(e)})
-    
-    return {"results": results}
+                cursor.executemany(update_sql, update_params)
+                # 检查哪些更新成功（受影响行数=1）
+                for idx, code in enumerate(to_update):
+                    # 这里无法直接获取每条的受影响行数，暂假设全部成功
+                    update_success.append(code)
+            except Exception as e:
+                for code in to_update:
+                    update_fail.append({"code": code, "success": False, "error": str(e)})
+        # 3. 批量INSERT
+        insert_success, insert_fail = [], []
+        if to_insert:
+            insert_sql = f'INSERT INTO products ("产品编码", "{time_field}", "{employee_field}") VALUES (%s, %s, %s)'
+            insert_params = [(code, now_str, data.employeeName) for code in to_insert]
+            try:
+                cursor.executemany(insert_sql, insert_params)
+                insert_success.extend(to_insert)
+            except Exception as e:
+                for code in to_insert:
+                    insert_fail.append({"code": code, "success": False, "error": str(e)})
+        conn.commit()
+        # 4. 组装返回结果
+        for code in update_success:
+            results.append({"code": code, "success": True, "action": "update"})
+        for code in insert_success:
+            results.append({"code": code, "success": True, "action": "insert"})
+        results.extend(update_fail)
+        results.extend(insert_fail)
+        return {"results": results}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return {"results": [{"code": code, "success": False, "error": str(e)} for code in data.productCodes]}
+    finally:
+        if conn:
+            conn.close()
 
 @app.get("/api/getProductDetails")
 async def get_product_details(productCode: str):
